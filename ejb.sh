@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  ONE-CLICK: Keep Flutter Web + playit.gg ALIVE Forever (Debian 11/12)
-#  Run: curl -sL https://raw.githubusercontent.com/yourname/keepalive/main/install.sh | sudo bash
+#  ONE-CLICK: Keep Flutter Web + YOUR ./playit-linux-amd64 ALIVE (Debian)
+#  1. Put your playit binary at: /usr/local/bin/playit-linux-amd64
+#  2. Run: curl -sL https://raw.githubusercontent.com/Arroi/ra/main/ejb.sh
 # =============================================================================
 
 set -euo pipefail
@@ -10,26 +11,29 @@ log()   { printf '\033[1;32m[+]\033[0m %s\n' "$*"; }
 warn()  { printf '\033[1;33m[!]\033[0m %s\n' "$*"; }
 error() { printf '\033[1;31m[-]\033[0m %s\n' "$*" >&2; exit 1; }
 
-log "Starting full auto-setup..."
+log "Starting auto-setup (NO playit.gg download)..."
 
 # ----------------------------------------------------------------------
-# 1. System packages (including TLS certs)
+# 1. Check your playit binary exists
 # ----------------------------------------------------------------------
-log "Updating package index..."
+PLAYIT_BIN="/usr/local/bin/playit-linux-amd64"
+if [ ! -f "$PLAYIT_BIN" ]; then
+    error "ERROR: $PLAYIT_BIN not found!
+    → Download it from https://playit.gg
+    → Place it at: $PLAYIT_BIN
+    → Make executable: chmod +x $PLAYIT_BIN"
+fi
+chmod +x "$PLAYIT_BIN"
+log "Found your playit binary: $PLAYIT_BIN"
+
+# ----------------------------------------------------------------------
+# 2. System packages
+# ----------------------------------------------------------------------
+log "Installing system packages..."
 apt-get update -y
-
-log "Installing required packages..."
 apt-get install -y --no-install-recommends \
     curl ca-certificates git unzip xz-utils libglu1-mesa openjdk-11-jdk \
     systemd procps net-tools
-
-# ----------------------------------------------------------------------
-# 2. playit.gg tunnel
-# ----------------------------------------------------------------------
-PLAYIT_BIN="/usr/local/bin/playit"
-log "Downloading playit.gg..."
-curl -fsSL https://playit.gg/downloads/playit-linux_64 -o "$PLAYIT_BIN"
-chmod +x "$PLAYIT_BIN"
 
 # ----------------------------------------------------------------------
 # 3. Flutter SDK
@@ -42,7 +46,7 @@ if [ ! -d "$FLUTTER_DIR" ]; then
     curl -fsSL "$FLUTTER_URL" | tar xJ -C /opt
     chown -R root:root "$FLUTTER_DIR"
 else
-    log "Flutter already present – skipping download"
+    log "Flutter already installed"
 fi
 
 # ----------------------------------------------------------------------
@@ -50,7 +54,7 @@ fi
 # ----------------------------------------------------------------------
 APP_DIR="/opt/flutter-web-app"
 if [ ! -d "$APP_DIR" ]; then
-    log "Creating a tiny Flutter web demo..."
+    log "Creating demo Flutter web app..."
     mkdir -p "$APP_DIR"
     pushd "$APP_DIR" >/dev/null
 
@@ -69,30 +73,30 @@ EOF
     "$FLUTTER_DIR/bin/flutter" pub get
     popd >/dev/null
 else
-    log "Flutter app already exists – skipping"
+    log "Flutter app already exists"
 fi
 
 # ----------------------------------------------------------------------
-# 5. Keep-alive daemon script
+# 5. Keep-alive daemon (uses YOUR playit binary)
 # ----------------------------------------------------------------------
 KEEPALIVE_SCRIPT="/usr/local/bin/keep-flutter-playit-alive.sh"
 
-cat > "$KEEPALIVE_SCRIPT" <<'EOS'
+cat > "$KEEPALIVE_SCRIPT" <<EOS
 #!/usr/bin/env bash
 set -euo pipefail
 
 APP_DIR="/opt/flutter-web-app"
 FLUTTER_DIR="/opt/flutter"
-FLUTTER="$FLUTTER_DIR/bin/flutter"
-PLAYIT="/usr/local/bin/playit"
+FLUTTER="\$FLUTTER_DIR/bin/flutter"
+PLAYIT="$PLAYIT_BIN"
 LOG="/var/log/keepalive.log"
 
-log() { echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | tee -a "$LOG"; }
+log() { echo "\$(date '+%Y-%m-%d %H:%M:%S') - \$1" | tee -a "\$LOG"; }
 
 start_playit() {
-    if ! pgrep -f "$(basename "$PLAYIT")" >/dev/null; then
-        log "Starting playit.gg tunnel..."
-        nohup "$PLAYIT" >/dev/null 2>&1 &
+    if ! pgrep -f "\$(basename "\$PLAYIT")" >/dev/null; then
+        log "Starting YOUR playit-linux-amd64 tunnel..."
+        nohup "\$PLAYIT" >/dev/null 2>&1 &
         sleep 5
     fi
 }
@@ -100,8 +104,8 @@ start_playit() {
 start_flutter() {
     if ! pgrep -f "flutter.*web-server" >/dev/null; then
         log "Launching Flutter web server (:6000)..."
-        pushd "$APP_DIR" >/dev/null
-        nohup "$FLUTTER" run -d web-server \
+        pushd "\$APP_DIR" >/dev/null
+        nohup "\$FLUTTER" run -d web-server \
             --web-port 6000 --web-hostname 0.0.0.0 \
             >/dev/null 2>&1 &
         popd >/dev/null
@@ -113,7 +117,7 @@ health_check() {
     curl -fs --max-time 8 http://127.0.0.1:6000 >/dev/null
 }
 
-log "=== keepalive daemon started ==="
+log "=== keepalive daemon started (using YOUR playit) ==="
 while :; do
     start_playit
     start_flutter
@@ -124,20 +128,20 @@ while :; do
         pkill -f "flutter.*web-server" || true
         sleep 3
     fi
-    sleep 180   # 3-minute ping interval
+    sleep 180
 done
 EOS
 
 chmod +x "$KEEPALIVE_SCRIPT"
 
 # ----------------------------------------------------------------------
-# 6. systemd service (robust)
+# 6. systemd service
 # ----------------------------------------------------------------------
 SERVICE_FILE="/etc/systemd/system/keepalive.service"
 
 cat > "$SERVICE_FILE" <<EOF
 [Unit]
-Description=Keep Flutter Web + playit.gg Alive
+Description=Keep Flutter Web + YOUR playit-linux-amd64 Alive
 After=network-online.target
 Wants=network-online.target
 
@@ -151,7 +155,6 @@ StandardError=journal
 Environment=PATH=/usr/local/bin:/usr/bin:/bin:$FLUTTER_DIR/bin
 Environment=FLUTTER_HOME=$FLUTTER_DIR
 User=root
-WorkingDirectory=/root
 
 [Install]
 WantedBy=multi-user.target
@@ -162,11 +165,9 @@ EOF
 # ----------------------------------------------------------------------
 log "Reloading systemd..."
 systemctl daemon-reload
-
-log "Enabling service..."
 systemctl enable keepalive.service
 
-log "Starting service (with short delay)..."
+log "Starting service..."
 sleep 3
 systemctl start keepalive.service
 
@@ -175,8 +176,8 @@ systemctl start keepalive.service
 # ----------------------------------------------------------------------
 log "ALL DONE!"
 log "   • Flutter web → http://$(hostname -I | awk '{print $1}'):6000"
-log "   • playit.gg tunnel is running"
+log "   • YOUR playit-linux-amd64 is running"
 log "   • Logs: journalctl -u keepalive.service -f"
-log "   • Reboot? Service will auto-start."
+log "   • Reboot? It auto-starts."
 log ""
-log "Replace /opt/flutter-web-app with your own project whenever you want."
+log "Replace /opt/flutter-web-app with your real app anytime."
